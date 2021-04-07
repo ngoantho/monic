@@ -1,3 +1,5 @@
-kilo: kilo.c
-	$(CC) kilo.c -o kilo -pedantic -std=c99
-	./kilo
+monic: monic.c
+	$(CC) monic.c -o monic -pedantic -std=c99
+
+run: monic
+	./monic

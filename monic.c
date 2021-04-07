@@ -1,16 +1,22 @@
 #pragma region includes
+
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
-#pragma endregion
+#pragma endregion includes
 
 #pragma region defines
-#define KILO_VERSION "0.0.1"
+#define MONIC_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k)&0x1f)
 
 enum editorKey {
@@ -24,19 +30,26 @@ enum editorKey {
   PAGE_UP,
   PAGE_DOWN
 };
-#pragma endregion
+#pragma endregion defines
 
 #pragma region data
+typedef struct erow {
+  int size;
+  char *chars;
+} erow;
+
 struct editorConfig {
   int cx, cy;
   int screenrows;
   int screencols;
+  int numrows;
+  erow row;
   struct termios orig_termios;
 };
 
 struct editorConfig E;
 
-#pragma endregion
+#pragma endregion data
 
 #pragma region terminal
 void die(const char *s) {
@@ -176,7 +189,33 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
-#pragma endregion
+#pragma endregion terminal
+
+#pragma region file i / o
+
+void editorOpen(char *filename) {
+  FILE *fp = fopen(filename, "r");
+  if (!fp)
+    die("fopen");
+  char *line = NULL;
+  size_t linecap = 0;
+  ssize_t linelen;
+  linelen = getline(&line, &linecap, fp);
+  if (linelen != -1) {
+    while (linelen > 0 &&
+           (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+      linelen--;
+    E.row.size = linelen;
+    E.row.chars = malloc(linelen + 1);
+    memcpy(E.row.chars, line, linelen);
+    E.row.chars[linelen] = '\0';
+    E.numrows = 1;
+  }
+  free(line);
+  fclose(fp);
+}
+
+#pragma endregion file i / o
 
 #pragma region append buffer
 
@@ -197,28 +236,35 @@ void abAppend(struct abuf *ab, const char *s, int len) {
 }
 void abFree(struct abuf *ab) { free(ab->b); }
 
-#pragma endregion
+#pragma endregion append buffer
 
 #pragma region output
 void editorDrawRows(struct abuf *ab) {
   int y;
   for (y = 0; y < E.screenrows; y++) {
-    if (y == E.screenrows / 3) {
-      char welcome[80];
-      int welcomelen = snprintf(welcome, sizeof(welcome),
-                                "Kilo editor -- version %s", KILO_VERSION);
-      if (welcomelen > E.screencols)
-        welcomelen = E.screencols;
-      int padding = (E.screencols - welcomelen) / 2;
-      if (padding) {
+    if (y >= E.numrows) {
+      if (E.numrows == 0 && y == E.screenrows / 3) {
+        char welcome[80];
+        int welcomelen = snprintf(welcome, sizeof(welcome),
+                                  "Monic editor -- version %s", MONIC_VERSION);
+        if (welcomelen > E.screencols)
+          welcomelen = E.screencols;
+        int padding = (E.screencols - welcomelen) / 2;
+        if (padding) {
+          abAppend(ab, "~", 1);
+          padding--;
+        }
+        while (padding--)
+          abAppend(ab, " ", 1);
+        abAppend(ab, welcome, welcomelen);
+      } else {
         abAppend(ab, "~", 1);
-        padding--;
       }
-      while (padding--)
-        abAppend(ab, " ", 1);
-      abAppend(ab, welcome, welcomelen);
     } else {
-      abAppend(ab, "~", 1);
+      int len = E.row.size;
+      if (len > E.screencols)
+        len = E.screencols;
+      abAppend(ab, E.row.chars, len);
     }
 
     abAppend(ab, "\x1b[K", 3);
@@ -245,7 +291,7 @@ void editorRefreshScreen() {
   write(STDOUT_FILENO, ab.b, ab.len);
   abFree(&ab);
 }
-#pragma endregion
+#pragma endregion output
 
 #pragma region input
 void editorMoveCursor(int key) {
@@ -305,21 +351,25 @@ void editorProcessKeypress() {
     break;
   }
 }
-#pragma endregion
+#pragma endregion input
 
 /** init **/
 
 void initEditor() {
   E.cx = 0;
   E.cy = 0;
+  E.numrows = 0;
 
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
 }
 
-int main() {
+int main(int argc, char *argv[]) {
   enableRawMode();
   initEditor();
+  if (argc >= 2) {
+    editorOpen(argv[1]);
+  }
 
   while (1) {
     editorRefreshScreen();
