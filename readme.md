@@ -1,6 +1,6 @@
-# l
+# monic
 > A super-tiny text editor in the console
-> 
+>
 
 ## Why
 Exploring how vim works.
